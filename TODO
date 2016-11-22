@@ -1,0 +1,8 @@
+## TODO
+
+Skin
+* Might have to move to pin change interrupts in case more than 2 pins need to be observed. There is an Arduino library [PinChangeInt][pinchange] that might help here.
+* Check with 2n7000 or other small signal mosfet. Would that work as well?
+* Adapt to "normal conditions" of skin pulses, so that change in amount of received pulses is the real trigger.
+
+[pinchange]: http://playground.arduino.cc/Main/PinChangeInt
