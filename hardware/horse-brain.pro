@@ -1,4 +1,4 @@
-update=ti 22. marraskuuta 2016 13.32.31
+update=ti 29. marraskuuta 2016 23.18.49
 version=1
 last_client=kicad
 [pcbnew]
@@ -27,7 +27,7 @@ NetIExt=net
 version=1
 [eeschema]
 version=1
-LibDir=../../../../../../Elektroniikka/KiCad/library;../../../../../../Elektroniikka/KiCad/library/arduino;../../../../../../Elektroniikka/KiCad/library/oturpe-kicad-lib
+LibDir=../../../../../Elektroniikka/KiCad/library/oturpe-kicad-lib;../../../../../Elektroniikka/KiCad/library/arduino;../../../../../Elektroniikka/KiCad/library/kicad_libs/library
 [eeschema/libraries]
 LibName1=power
 LibName2=device
