@@ -10,6 +10,8 @@
 #define MOTOR_FORWARD_PIN 9
 // Digital output pin for motor reverse run
 #define MOTOR_REVERSE_PIN 8
+// Pwm output pin for motor frequency setting
+#define MOTOR_FREQUENCY_PIN 11
 
 // Smoothing frame length. Given in units of millisecond
 #define SKIN_SMOOTHING_FRAME_LENGTH 300
@@ -50,10 +52,12 @@ void setup() {
     pinMode(MOTOR_ENABLE_PIN, OUTPUT);
     pinMode(MOTOR_FORWARD_PIN, OUTPUT);
     pinMode(MOTOR_REVERSE_PIN, OUTPUT);
+    pinMode(MOTOR_FREQUENCY_PIN, OUTPUT);
 
     digitalWrite(MOTOR_ENABLE_PIN, LOW);
     digitalWrite(MOTOR_FORWARD_PIN, LOW);
     digitalWrite(MOTOR_REVERSE_PIN, LOW);
+    analogWrite(MOTOR_FREQUENCY_PIN, 0xff);
 
     attachInterrupt(digitalPinToInterrupt(SKIN_PIN), skinPulseReceived, FALLING); 
 
@@ -119,9 +123,12 @@ void runMotor(unsigned long currentTime) {
     if (isMotorRunning) {
         isMotorDirectionForward = !isMotorDirectionForward;
     }
+
     int runPin = isMotorDirectionForward ? MOTOR_FORWARD_PIN : MOTOR_REVERSE_PIN;
+    uint8_t motorFrequency = isMotorDirectionForward ? 200 : 100;
 
     digitalWrite(MOTOR_ENABLE_PIN, isMotorRunning);
     digitalWrite(runPin, isMotorRunning);
+    analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
     lastMotorChangeTime = currentTime;
 }
