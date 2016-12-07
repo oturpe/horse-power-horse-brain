@@ -1,17 +1,24 @@
+#include "EnableInterrupt.h"
+
 // Output pin for indicator led
 #define INDICATOR_PIN 13
 
 // Digital output pin for skin send
-#define SKIN_SEND_PIN 3
-// Digital input pin for skin receive
-#define SKIN_RECEIVE_PIN 2
+#define SKIN_SEND_PIN 2
+// The amount of skin receive pins
+#define SKIN_RECEIVE_PINS 4
+// Digital input pins for skin receive
+#define SKIN_RECEIVE_PIN_0 3
+#define SKIN_RECEIVE_PIN_1 4
+#define SKIN_RECEIVE_PIN_2 5
+#define SKIN_RECEIVE_PIN_3 6
 
 // The minimum length of skin pulse that is accepted
 #define SKIN_PULSE_MIN_LENGTH 10
 // The maximum time to wait for a skin pulse. Given in units of microsecond
 #define SKIN_PULSE_TIMEOUT (50 * 1000)
 // The minimum time between two skin pulses. Given in units of millisecond
-#define SKIN_PULSE_DELAY 400
+#define SKIN_PULSE_DELAY (4 * 1000)
 //
 #define SKIN_PULSE_THRESHOLD 1000
 
@@ -35,6 +42,8 @@
 #define DEBUG
 
 enum SkinState {
+    // Undefined state
+    UNDEFINED,
     // Ready for sending new pulse
     READY,
     // Waiting for pulse reception
@@ -42,22 +51,29 @@ enum SkinState {
     // Pulse has been received, but not processed
     RECEIVED,
     // Received pulse has been processed
-    PROCESSED,
+    COOLING_DOWN,
     // Pulse fast received too quickly to get a reading
     ERROR_TOO_FAST,
     // Pulse was sent but never received
     ERROR_TIMEOUT
 };
 
-// Skin state
-SkinState skinState = READY;
 // The moment when last skin sense was started. Given in units of
 // microsecond.
 unsigned long skinPulseStartTime = 0;
-// Length of last received skin pulse. Given in units of microsecond.
-unsigned long skinPulseLength = 0;
-// The time when last skind pulse was received. Given in units of millisecond
-unsigned long skinPulseReceivedTime = 0;
+
+struct Skin {
+    // Receive pin
+    uint8_t receivePin = 0;
+    // Skin state
+    SkinState state = READY;
+    // Length of last received skin pulse. Given in units of microsecond.
+    unsigned long pulseLength = 0;
+    // The time when last skind pulse was received. Given in units of millisecond
+    unsigned long pulseReceivedTime = 0;
+};
+
+Skin skins[SKIN_RECEIVE_PINS];
 
 // The time when the horse was last activated. Given in units of millisecond
 unsigned long lastActivationTime = 0;
@@ -71,8 +87,14 @@ unsigned long lastMotorChangeTime = 0;
 
 void setup() {
     pinMode(INDICATOR_PIN, OUTPUT);
+
     pinMode(SKIN_SEND_PIN, OUTPUT);
-    pinMode(SKIN_RECEIVE_PIN, INPUT);
+
+    pinMode(SKIN_RECEIVE_PIN_0, INPUT);
+    pinMode(SKIN_RECEIVE_PIN_1, INPUT);
+    pinMode(SKIN_RECEIVE_PIN_2, INPUT);
+    pinMode(SKIN_RECEIVE_PIN_3, INPUT);
+
     pinMode(MOTOR_ENABLE_PIN, OUTPUT);
     pinMode(MOTOR_FORWARD_PIN, OUTPUT);
     pinMode(MOTOR_REVERSE_PIN, OUTPUT);
@@ -85,7 +107,14 @@ void setup() {
     digitalWrite(MOTOR_REVERSE_PIN, LOW);
     analogWrite(MOTOR_FREQUENCY_PIN, 0xff);
 
-    attachInterrupt(digitalPinToInterrupt(SKIN_RECEIVE_PIN), skinPulseReceived, RISING); 
+    enableInterrupt(SKIN_RECEIVE_PIN_0, skinPulseReceived_0, RISING);
+    skins[0].receivePin = SKIN_RECEIVE_PIN_0;
+    enableInterrupt(SKIN_RECEIVE_PIN_1, skinPulseReceived_1, RISING);
+    skins[1].receivePin = SKIN_RECEIVE_PIN_1;
+    enableInterrupt(SKIN_RECEIVE_PIN_2, skinPulseReceived_2, RISING);
+    skins[2].receivePin = SKIN_RECEIVE_PIN_2;
+    enableInterrupt(SKIN_RECEIVE_PIN_3, skinPulseReceived_3, RISING);
+    skins[3].receivePin = SKIN_RECEIVE_PIN_3;
 
     #ifdef DEBUG
         Serial.begin(9600);
@@ -95,53 +124,86 @@ void setup() {
 void loop() {
     unsigned long currentTime = millis();
 
-    unsigned long currentTimeMicros;
-    switch (skinState) {
+    for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
+        unsigned long currentTimeMicros;
+        Skin *skin = &skins[i];
+
+        switch (skin->state) {
+        case READY:
+            break;
+        case WAITING:
+            currentTimeMicros = micros();
+            if (currentTimeMicros > skinPulseStartTime + SKIN_PULSE_TIMEOUT) {
+                // TODO: No idea why this does not work
+                //skinState = ERROR_TIMEOUT;
+            }
+            break;
+        case RECEIVED:
+            if (skin->pulseLength > SKIN_PULSE_THRESHOLD) {
+                // TOOD: Should a different thing happen for different skin elements?
+                activate(currentTime);
+            }
+
+            #ifdef DEBUG
+                serialPrintSkinReadingPrefix(i);
+                Serial.println(skin->pulseLength, DEC);
+            #endif
+
+            skin->state = COOLING_DOWN;
+            break;
+        case COOLING_DOWN:
+            break;
+        case ERROR_TOO_FAST:
+            #ifdef DEBUG
+                serialPrintSkinReadingPrefix(i);
+                Serial.println("Too fast");
+            #endif
+            skin->pulseReceivedTime = currentTime;
+            skin->state = COOLING_DOWN;
+            break;
+        case ERROR_TIMEOUT:
+            #ifdef DEBUG
+                serialPrintSkinReadingPrefix(i);
+                Serial.println("Timeout");
+            #endif
+            skin->pulseReceivedTime = currentTime;
+            skin->state = COOLING_DOWN;
+            break;
+        }
+    }
+
+    SkinState skinCommonState = skins[0].state;
+    for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
+        if (skins[i].state != skinCommonState) {
+            skinCommonState = UNDEFINED;
+            break;
+        }
+    }
+
+    switch (skinCommonState) {
     case READY:
         startSkinPulse();
-        skinState = WAITING;
-        break;
-    case WAITING:
-        currentTimeMicros = micros();
-        if (currentTimeMicros > skinPulseStartTime + SKIN_PULSE_TIMEOUT) {
-            //skinState = ERROR_TIMEOUT;
+        for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
+            Skin * skin = &skins[i];
+            skin->state = WAITING;
         }
         break;
-    case RECEIVED:
+    case COOLING_DOWN:
         digitalWrite(SKIN_SEND_PIN, LOW);
-
-        if (skinPulseLength > SKIN_PULSE_THRESHOLD) {
-            activate(currentTime);
-        }
-
-        #ifdef DEBUG
-            Serial.print("Skin reading:");
-            Serial.println(skinPulseLength);
-        #endif
-
-        skinState = PROCESSED;
-        break;
-    case PROCESSED:
+        bool areAllCooled = true;
         // Condition for sending another pulse.
-        if (currentTime > skinPulseReceivedTime + SKIN_PULSE_DELAY) {
-            skinState = READY;
+        for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
+            Skin * skin = &skins[i];
+            if (currentTime <= skin->pulseReceivedTime + SKIN_PULSE_DELAY) {
+                areAllCooled = false;
+            }
         }
-        break;
-    case ERROR_TOO_FAST:
-        #ifdef DEBUG
-            Serial.println("Skin reading: Too fast");
-        #endif
-        skinPulseReceivedTime = currentTime;
-        digitalWrite(SKIN_SEND_PIN, LOW);
-        skinState = PROCESSED;
-        break;
-    case ERROR_TIMEOUT:
-        #ifdef DEBUG
-            Serial.println("Skin reading: Timeout");
-        #endif
-        skinPulseReceivedTime = currentTime;
-        digitalWrite(SKIN_SEND_PIN, LOW);
-        skinState = PROCESSED;
+        if (areAllCooled) {
+            for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
+                Skin * skin = &skins[i];
+                skin->state = READY;
+            }
+        }
         break;
     }
 
@@ -162,22 +224,48 @@ void startSkinPulse() {
     digitalWrite(SKIN_SEND_PIN, HIGH);
 }
 
-void skinPulseReceived() {
+void skinPulseReceived_0() {
+    skinPulseReceived(0);
+}
+
+void skinPulseReceived_1() {
+    skinPulseReceived(1);
+}
+
+void skinPulseReceived_2() {
+    skinPulseReceived(2);
+}
+
+void skinPulseReceived_3() {
+    skinPulseReceived(3);
+}
+
+void skinPulseReceived(uint8_t skinIndex) {
+    Skin * skin = &skins[skinIndex];
     // A false trigger, might happen when somebody is actually touching the skin
-    if (skinState != WAITING) {
+    if (skin->state != WAITING) {
          return;
     }
 
-    skinPulseReceivedTime = millis();
+    skin->pulseReceivedTime = millis();
     unsigned long currentTime = micros();
     if (currentTime > skinPulseStartTime + SKIN_PULSE_MIN_LENGTH) {
-        skinPulseLength =  currentTime - skinPulseStartTime;
-        skinState = RECEIVED;
+        skin->pulseLength =  currentTime - skinPulseStartTime;
+        skin->state = RECEIVED;
     }
     else {
-        skinState = ERROR_TOO_FAST;
+        skin->state = ERROR_TOO_FAST;
     }
 }
+
+#ifdef DEBUG
+    void serialPrintSkinReadingPrefix(uint8_t receiverIndex) {
+        Serial.print("Skin reading;");
+        Serial.print("[");
+        Serial.print(receiverIndex, DEC);
+        Serial.print("];");
+    }
+#endif
 
 uint8_t motorFrequency = 0;
 void runMotor(unsigned long currentTime) {
