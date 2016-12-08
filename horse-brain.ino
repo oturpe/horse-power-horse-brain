@@ -38,6 +38,38 @@
 // How long motor runs when it starts. Given in units of millisecond
 #define MOTOR_RUNNING_TIME (1 * 1000)
 
+// Pin tied to trigger on the ultrasonic sensor.
+#define TRIGGER_PIN  7
+// Pin tied to echo on the ultrasonic sensor.
+#define ECHO_FRONT_PIN     6  
+#define ECHO_BACK_PIN     5
+// Pin tied to output on Infrared sensor.
+#define IR_FRONT_PIN 4
+#define IR_BACK_PIN 3
+
+// Maximum distance we want to pin for (in centimeters). Maximum sensor distance is rated at 400-500cm.
+int sightMaxDistance = 400; 
+
+//Measured distance US sensor
+int sightDistanceFront = 0;
+int sightDistanceBack = 0;
+
+//If there is a person sensed by IR sensor.
+byte isPersonInFront = 0;
+byte isPersonInBack = 0;
+
+//Timer for US sensor delay
+unsigned long sightDelay = 0;
+
+//When was US sensor triggerd the last time
+unsigned long sightTriggeredTime = 0;
+
+//Indicator byte to listen to FRONT or BACK ECHO
+byte isSightingFront = 0;
+
+//Indicator byte to avoid "1" by triggering US
+byte triggState = 0;
+
 // Uncommenting this activates the serial debug mode
 #define DEBUG
 
@@ -99,6 +131,12 @@ void setup() {
     pinMode(MOTOR_FORWARD_PIN, OUTPUT);
     pinMode(MOTOR_REVERSE_PIN, OUTPUT);
     pinMode(MOTOR_FREQUENCY_PIN, OUTPUT);
+    pinMode(TRIGGER_PIN, OUTPUT);
+
+    pinMode(ECHO_FRONT_PIN, INPUT);
+    pinMode(ECHO_BACK_PIN, INPUT);
+    pinMode(IR_FRONT_PIN, INPUT);
+    pinMode(IR_BACK_PIN, INPUT);
 
     digitalWrite(SKIN_SEND_PIN, LOW);
 
@@ -115,6 +153,8 @@ void setup() {
     skins[2].receivePin = SKIN_RECEIVE_PIN_2;
     enableInterrupt(SKIN_RECEIVE_PIN_3, skinPulseReceived_3, RISING);
     skins[3].receivePin = SKIN_RECEIVE_PIN_3;
+
+    sightMaxDistance = sightMaxDistance * 2 * 29.1; // Turn sightMaxDistance from CM into "TIME".
 
     #ifdef DEBUG
         Serial.begin(9600);
@@ -212,6 +252,33 @@ void loop() {
     }
 
     runMotor(currentTime);
+
+    // It triggers US sensor. It is "listening" to one sensor side at the time (FRONT or BACK)
+    if (millis() - sightTriggeredTime > sightDelay) {
+        if (isSightingFront == 0) {
+            if (triggState == 0) {
+                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+                UltraSonic(ECHO_FRONT_PIN);
+            }
+            else {
+                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+                sightDistanceFront = UltraSonic(ECHO_FRONT_PIN);
+            }
+        }
+        else {
+            if (triggState == 0) {
+                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+                UltraSonic(ECHO_BACK_PIN);
+            }
+            else {
+                 //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+                 sightDistanceBack = UltraSonic(ECHO_BACK_PIN);
+            }
+        }
+    }
+
+    isPersonInFront = digitalRead(IR_FRONT_PIN);
+    isPersonInBack = digitalRead(IR_BACK_PIN);
 }
 
 void activate(unsigned long currentTime) {
@@ -290,4 +357,36 @@ void runMotor(unsigned long currentTime) {
     digitalWrite(runPin, isMotorRunning);
     analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
     lastMotorChangeTime = currentTime;
+}
+
+int UltraSonic(int PIN) { //Triggering US sensor
+  int  DISTANCE = 0;
+    
+  if  (triggState == 0) {
+    digitalWrite(TRIGGER_PIN, HIGH);
+    sightTriggeredTime = millis();
+    sightDelay = 10;
+    triggState = 1;
+  }
+
+  else if (triggState == 1) {
+    digitalWrite(TRIGGER_PIN, LOW);
+    sightTriggeredTime = millis();
+    sightDelay = 0;
+    triggState = 0;
+
+    // Returns the length of the pulse in microseconds (!!) or 0 if no complete
+    // pulse was received within the timeout.
+    DISTANCE = pulseIn(PIN, HIGH, sightMaxDistance);
+    if (DISTANCE == 0) {
+      DISTANCE  = sightMaxDistance;
+    }
+    if (isSightingFront == 0) {
+      isSightingFront = 1;
+    }
+    else {
+      isSightingFront = 0;
+    }
+    return (DISTANCE);
+  }
 }
