@@ -44,8 +44,8 @@
 // Pin tied to trigger on the ultrasonic sensor.
 #define SIGHT_TRIGGER_PIN  12
 // Pin tied to echo on the ultrasonic sensor.
-#define SIGHT_ECHO_FRONT_PIN A0
-#define SIGHT_ECHO_BACK_PIN A1
+#define SIGHT_ECHO_FRONT_PIN A1
+#define SIGHT_ECHO_BACK_PIN A2
 
 // Interval of using sight. Given in units of millisecond
 #define SIGHT_INTERVAL 500
@@ -56,8 +56,8 @@
 #define SIGHT_ACTIVATION_DISTANCE 100
 
 // Pin tied to output on Infrared sensor.
-#define IR_FRONT_PIN A2
-#define IR_BACK_PIN A3
+#define IR_FRONT_PIN A3
+#define IR_BACK_PIN A4
 
 // Maximum distance we want to pin for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 int sightMaxDelay = ultrasonicDelay(SIGHT_MAX_DISTANCE); 
@@ -79,11 +79,11 @@ unsigned long sightDelay = 0;
 //When was US sensor triggerd the last time
 unsigned long sightTriggeredTime = 0;
 
-//Indicator byte to listen to FRONT or BACK ECHO
-byte isSightingFront = 0;
+//Indicator boolean to listen to FRONT or BACK ECHO
+bool isSightingFront = true;
 
-//Indicator byte to avoid "1" by triggering US
-byte triggState = 0;
+//Indicator boolean to avoid "1" by triggering US
+bool isSightSending = true;
 
 enum SkinState {
     // Undefined state
@@ -146,8 +146,8 @@ void setup() {
     pinMode(MOTOR_FREQUENCY_PIN, OUTPUT);
     pinMode(SIGHT_TRIGGER_PIN, OUTPUT);
 
-    pinMode(SIGHT_ECHO_FRONT_PIN, INPUT);
-    pinMode(SIGHT_ECHO_BACK_PIN, INPUT);
+    pinMode(SIGHT_ECHO_FRONT_PIN, INPUT_PULLUP);
+    pinMode(SIGHT_ECHO_BACK_PIN, INPUT_PULLUP);
     pinMode(IR_FRONT_PIN, INPUT);
     pinMode(IR_BACK_PIN, INPUT);
 
@@ -170,14 +170,6 @@ void setup() {
     #ifdef DEBUG
         Serial.begin(9600);
     #endif
-}
-
-inline uint32_t ultrasonicDistance(int delay) {
-    return delay / 2 / 29.1;
-}
-
-inline uint32_t ultrasonicDelay(int distance) {
-    return distance * 2 * 29.1;
 }
 
 void loop() {
@@ -270,57 +262,120 @@ void loop() {
         digitalWrite(INDICATOR_PIN, LOW);
     }
 
-    // It triggers US sensor. It is "listening" to one sensor side at the time (FRONT or BACK)
-    if (millis() - sightTriggeredTime > sightDelay) {
-        if (isSightingFront == 0) {
-            if (triggState == 0) {
-                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
-                UltraSonic(SIGHT_ECHO_FRONT_PIN);
-            }
-            else {
-                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
-                sightDistanceFront = UltraSonic(SIGHT_ECHO_FRONT_PIN);
-            }
-        }
-        else {
-            if (triggState == 0) {
-                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
-                UltraSonic(SIGHT_ECHO_BACK_PIN);
-            }
-            else {
-                //When TRIGG you get 1 (!!), when you recive ECHO you get distance
-                sightDistanceBack = UltraSonic(SIGHT_ECHO_BACK_PIN);
-
-                // TODO: Define real action on sighting
-                bool isFrontSighting = sightDistanceFront <= sightThresholdDelay;
-                bool isBackSighting = sightDistanceBack <= sightThresholdDelay;
-                digitalWrite(INDICATOR_PIN, isFrontSighting || isBackSighting);
-
-                #ifdef DEBUG
-                    sightLastPrintTime = currentTime;
-
-                    Serial.print("sight;front;");
-                    Serial.print(ultrasonicDistance(sightDistanceFront), DEC);
-                    if (isFrontSighting) {
-                        Serial.print(";sighted");
-                    }
-                    Serial.println();
-                    Serial.print("sight;back;");
-                    Serial.print(ultrasonicDistance(sightDistanceBack), DEC);
-                    if (isBackSighting) {
-                        Serial.print(";sighted");
-                    }
-                    Serial.println();
-                    }
-                #endif
-            }
-        }
-    }
+    runSight(currentTime);
 
     isPersonInFront = digitalRead(IR_FRONT_PIN);
     isPersonInBack = digitalRead(IR_BACK_PIN);
 
     runMotor(currentTime);
+}
+
+/// \brief
+///    Runs one step of sighting loop
+///
+/// \param currentTime
+///    Current time in milliseconds
+void runSight(unsigned long currentTime) {
+    // It triggers US sensor. It is "listening" to one sensor side at the time (FRONT or BACK)
+    if (currentTime <= sightTriggeredTime + sightDelay) {
+        return;
+    }
+
+    if (isSightingFront) {
+        if (isSightSending) {
+            //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+            UltraSonic(SIGHT_ECHO_FRONT_PIN);
+        }
+        else {
+            //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+            sightDistanceFront = UltraSonic(SIGHT_ECHO_FRONT_PIN);
+            processSighting(sightDistanceFront, true);
+        }
+    }
+    else {
+        if (isSightSending) {
+            //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+            UltraSonic(SIGHT_ECHO_BACK_PIN);
+        }
+        else {
+            //When TRIGG you get 1 (!!), when you recive ECHO you get distance
+            sightDistanceBack = UltraSonic(SIGHT_ECHO_BACK_PIN);
+            processSighting(sightDistanceBack, false);
+        }
+    }
+}
+
+inline uint32_t ultrasonicDistance(int delay) {
+    return delay / 2 / 29.1;
+}
+
+inline uint32_t ultrasonicDelay(int distance) {
+    return distance * 2 * 29.1;
+}
+
+/// \brief
+///    Triggers US sensor
+///
+/// \param echoPin
+///    Pin where echo is listened
+///
+/// \return
+///    Sighting delay when receiving. Constant value 0 when sending.
+unsigned int UltraSonic(int echoPin) {
+    unsigned int echoDelay = 0;
+
+    if (isSightSending) {
+        digitalWrite(SIGHT_TRIGGER_PIN, HIGH);
+        sightTriggeredTime = millis();
+        sightDelay = 10;
+    }
+    else {
+        digitalWrite(SIGHT_TRIGGER_PIN, LOW);
+        sightTriggeredTime = millis();
+        sightDelay = SIGHT_INTERVAL;
+
+        // Returns the length of the pulse in microseconds (!!) or 0 if no complete
+        // pulse was received within the timeout.
+        echoDelay = pulseIn(echoPin, HIGH, sightMaxDelay);
+        if (echoDelay == 0) {
+            echoDelay  = sightMaxDelay;
+        }
+
+        isSightingFront = !isSightingFront;
+    }
+
+    isSightSending = !isSightSending;
+
+    return echoDelay;
+}
+
+/// \brief
+///    Performs the actions required when something is sighted.
+///
+/// \param echoDelay
+///    Echo deleay from distance sensor
+///
+/// \param isFront
+///     If the sensor is the front sensor. Otherwise it is the back sensor
+void processSighting(uint32_t echoDelay, bool isFront) {
+    // TODO: Define real action on sighting
+    bool isSighting = echoDelay <= sightThresholdDelay;
+    digitalWrite(INDICATOR_PIN, isSighting);
+
+    #ifdef DEBUG
+        if (isFront) {
+            Serial.print("sight;front;");
+        }
+        else {
+            Serial.print("sight;back;");
+        }
+
+        Serial.print(ultrasonicDistance(echoDelay), DEC);
+        if (isSighting) {
+            Serial.print(";sighted");
+        }
+        Serial.println();
+    #endif
 }
 
 void activate(unsigned long currentTime) {
@@ -399,36 +454,4 @@ void runMotor(unsigned long currentTime) {
     digitalWrite(runPin, isMotorRunning);
     analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
     lastMotorChangeTime = currentTime;
-}
-
-int UltraSonic(int PIN) { //Triggering US sensor
-  int  DISTANCE = 0;
-    
-  if  (triggState == 0) {
-    digitalWrite(SIGHT_TRIGGER_PIN, HIGH);
-    sightTriggeredTime = millis();
-    sightDelay = 10;
-    triggState = 1;
-  }
-
-  else if (triggState == 1) {
-    digitalWrite(SIGHT_TRIGGER_PIN, LOW);
-    sightTriggeredTime = millis();
-    sightDelay = SIGHT_INTERVAL;
-    triggState = 0;
-
-    // Returns the length of the pulse in microseconds (!!) or 0 if no complete
-    // pulse was received within the timeout.
-    DISTANCE = pulseIn(PIN, HIGH, sightMaxDelay);
-    if (DISTANCE == 0) {
-      DISTANCE  = sightMaxDelay;
-    }
-    if (isSightingFront == 0) {
-      isSightingFront = 1;
-    }
-    else {
-      isSightingFront = 0;
-    }
-    return (DISTANCE);
-  }
 }
