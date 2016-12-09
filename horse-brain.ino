@@ -39,7 +39,7 @@
 #define MOTOR_FREQUENCY_PIN 11
 
 // How long motor runs when it starts. Given in units of millisecond
-#define MOTOR_RUNNING_TIME (1 * 1000)
+#define MOTOR_RUNNING_TIME 500
 
 // Pin tied to trigger on the ultrasonic sensor.
 #define SIGHT_TRIGGER_PIN  12
@@ -122,11 +122,19 @@ Skin skins[SKIN_RECEIVE_PINS];
 // The time when the horse was last activated. Given in units of millisecond
 unsigned long lastActivationTime = 0;
 
+// If motor is running at all
 bool isMotorRunning = false;
+// If motor movement direction is forward. Otherwise it is backward
+bool isMotorDirectionForward = true;
+// The last time motor state was changed. Given in units of millisecond
+// measured from program start.
 unsigned long lastMotorChangeTime = 0;
+// Motor running frequency given as pwm duty cycle. Range [0xff ... 0xff] is
+// linearly mapped to range defined by the inverter. It is expected to be
+// [0.0 Hz .. 50.0 Hz].
+uint8_t motorFrequency = 0;
 
 #ifdef DEBUG
-    int debugFrameNumber = 0;
     unsigned long sightLastPrintTime = 0;
 #endif 
 
@@ -153,10 +161,11 @@ void setup() {
 
     digitalWrite(SKIN_SEND_PIN, LOW);
 
-    digitalWrite(MOTOR_ENABLE_PIN, LOW);
-    digitalWrite(MOTOR_FORWARD_PIN, LOW);
-    digitalWrite(MOTOR_REVERSE_PIN, LOW);
-    analogWrite(MOTOR_FREQUENCY_PIN, 0xff);
+    // Set motor to standstill in every possible way
+    digitalWrite(MOTOR_ENABLE_PIN, HIGH);
+    digitalWrite(MOTOR_FORWARD_PIN, HIGH);
+    digitalWrite(MOTOR_REVERSE_PIN, HIGH);
+    analogWrite(MOTOR_FREQUENCY_PIN, 0x00);
 
     enableInterrupt(SKIN_RECEIVE_PIN_0, skinPulseReceived_0, RISING);
     skins[0].receivePin = SKIN_RECEIVE_PIN_0;
@@ -431,7 +440,6 @@ inline void skinPulseReceived(uint8_t skinIndex) {
     }
 #endif
 
-uint8_t motorFrequency = 0;
 void runMotor(unsigned long currentTime) {
     // TODO: This is just testing code, real run program has not been defined yet
 
@@ -439,19 +447,22 @@ void runMotor(unsigned long currentTime) {
         return;
     }
 
-    isMotorRunning = !isMotorRunning;
+    isMotorRunning = true;
 
-    static bool isMotorDirectionForward = false;
-
-    if (isMotorRunning) {
+    // TEMP: Just testing code
+    #define MOTOR_FREQUENCY_INCREMENT 8
+    uint8_t newMotorFrequency = motorFrequency + MOTOR_FREQUENCY_INCREMENT;
+    if (newMotorFrequency < motorFrequency) {
         isMotorDirectionForward = !isMotorDirectionForward;
     }
+    motorFrequency = newMotorFrequency;
 
-    int runPin = isMotorDirectionForward ? MOTOR_FORWARD_PIN : MOTOR_REVERSE_PIN;
-    motorFrequency += 8;
-
-    digitalWrite(MOTOR_ENABLE_PIN, /*isMotorRunning*/LOW);
-    digitalWrite(runPin, isMotorRunning);
+    // Note: interface to inverter's 24 V logic inverts values, thus LOW on output
+    // is seen as HIGH on inverter inputs and vice versa.
+    digitalWrite(MOTOR_ENABLE_PIN, !isMotorRunning);
+    digitalWrite(MOTOR_FORWARD_PIN, !isMotorRunning || !isMotorDirectionForward);
+    digitalWrite(MOTOR_REVERSE_PIN, !isMotorRunning || isMotorDirectionForward);
     analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
+
     lastMotorChangeTime = currentTime;
 }
