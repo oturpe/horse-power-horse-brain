@@ -32,21 +32,38 @@
 #define FUEL_CELL_SAMPLE_COUNT 10
 // How often fuel cell values are printed in debug mode. Given in units of
 // millisecond
-#define FUEL_CELL_PRINT_INTERVAL 1000
+#define FUEL_CELL_PRINT_INTERVAL 1000L
 
 // Thresholds that fuel cell measurements have to exceed to trigger each
 // emotional state.
-#define EMOTION_THRESHOLD_SLEEPY 70
 #define EMOTION_THRESHOLD_CALM 100
 #define EMOTION_THRESHOLD_ACTIVE 120
 #define EMOTION_THRESHOLD_WILD 150
 
+// Speed of movement associated with each emotion. Given in linear units in
+// range [0x00, 0xff].
+#define EMOTION_SPEED_SLEEPY 20
+#define EMOTION_SPEED_CALM 50
+#define EMOTION_SPEED_ACTIVE 70
+#define EMOTION_SPEED_WILD 120
+
+// Amount of time before horse wants to move associated with each emotion.
+// Given in units of millisecond.
+#define EMOTION_REST_PERIOD_SLEEPY (1 * 6 * 1000L)
+#define EMOTION_REST_PERIOD_CALM (20 * 1000L)
+#define EMOTION_REST_PERIOD_ACTIVE (10 * 1000L)
+#define EMOTION_REST_PERIOD_WILD (5 * 1000L)
+
+// How long restlessness continues after it starts. Given in units of
+// millisecond
+#define EMOTION_RESTLESS_PERIOD (10 * 1000L)
+
 // The minimum length of skin pulse that is accepted
 #define SKIN_PULSE_MIN_LENGTH 10
 // The maximum time to wait for a skin pulse. Given in units of microsecond
-#define SKIN_PULSE_TIMEOUT (50 * 1000)
+#define SKIN_PULSE_TIMEOUT (50 * 1000L)
 // The minimum time between two skin pulses. Given in units of millisecond
-#define SKIN_PULSE_DELAY (4 * 1000)
+#define SKIN_PULSE_DELAY (4 * 1000L)
 //
 #define SKIN_PULSE_THRESHOLD 1000
 
@@ -78,14 +95,14 @@
 #define SIGHT_MAX_DISTANCE 400
 // Maximum distance where the horse reacts to sightings. Given in units of
 // centimeter.
-#define SIGHT_ACTIVATION_DISTANCE 100
+#define SIGHT_ACTIVATION_DISTANCE /*100*/ 10
 
 // How long the motion sense remains active since detecting motion. Given in
 // units of millisecond
-#define IR_ACTIVATION_PERIOD (5 * 1000)
+#define IR_ACTIVATION_PERIOD (5 * 1000L)
 
 // Interval between printing sense values in debug mode. Given in units of millisecond
-#define SENSE_PRINT_INTERVAL 2000
+#define SENSE_PRINT_INTERVAL ( 2* 1000L)
 
 // Maximum distance we want to pin for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 int sightMaxDelay = ultrasonicDelay(SIGHT_MAX_DISTANCE); 
@@ -164,16 +181,53 @@ struct Senses {
 Senses senses;
 
 enum Emotion {
-    SLEEPY,
-    CALM,
-    ACTIVE,
-    WILD
+    SLEEPY = 0,
+    CALM = 1,
+    ACTIVE = 2,
+    WILD = 3
 };
 
-Emotion emotion;
+Emotion emotion = SLEEPY;
+
+uint8_t emotionSpeed() {
+    switch (emotion) {
+    case SLEEPY:
+        return EMOTION_SPEED_SLEEPY;
+    case CALM:
+        return EMOTION_SPEED_CALM;
+    case ACTIVE:
+        return EMOTION_SPEED_ACTIVE;
+    case WILD:
+        return EMOTION_SPEED_WILD;
+    }
+
+    return EMOTION_SPEED_CALM;
+}
+
+
+unsigned long emotionRestPeriod() {
+    switch (emotion) {
+    case SLEEPY:
+        return EMOTION_REST_PERIOD_SLEEPY;
+    case CALM:
+        return EMOTION_REST_PERIOD_CALM;
+    case ACTIVE:
+        return EMOTION_REST_PERIOD_ACTIVE;
+    case WILD:
+        return EMOTION_REST_PERIOD_WILD;
+    }
+}
+
 
 // The time when the horse was last activated. Given in units of millisecond
+// measured from program start.
 unsigned long lastActivationTime = 0;
+// The moment of time when the horse calms down. Given in units of millisecond
+// measured from program start
+unsigned long calmingTime = 0;
+// If restlessness is directed towards going forward. Otherwise it is directed
+// towards going backward.
+bool isRestlessForward;
 
 // If motor is running at all
 bool isMotorRunning = false;
@@ -234,6 +288,12 @@ void setup() {
 
     enableInterrupt(IR_FRONT_PIN, irDetectedFront, RISING);
     enableInterrupt(IR_BACK_PIN, irDetectedBack, RISING);
+
+    // Seed the pseudo random number generator with static voltage noise in
+    // unconnected A0 pin.
+    pinMode(A0, INPUT);
+    randomSeed(analogRead(A0));
+    pinMode(A0, OUTPUT);
 
     #ifdef DEBUG
         Serial.begin(9600);
@@ -340,10 +400,6 @@ void loop() {
     runCellMeasurement(currentTime);
     runMotionDetection(currentTime);
     runMotor(currentTime);
-
-    if (currentTime > lastActivationTime + ACTIVATION_LENGTH) {
-        digitalWrite(INDICATOR_PIN, LOW);
-    }
 
     #ifdef DEBUG
         if (currentTime > senseLastPrintTime + SENSE_PRINT_INTERVAL) {
@@ -494,11 +550,6 @@ void processSighting(uint32_t echoDelay, bool isFront) {
     #endif
 }
 
-void activate(unsigned long currentTime) {
-    lastActivationTime = currentTime;
-    digitalWrite(INDICATOR_PIN, HIGH);
-}
-
 void startSkinPulse() {
     skinPulseStartTime = micros();
     digitalWrite(SKIN_SEND_PIN, HIGH);
@@ -571,36 +622,9 @@ void runCellMeasurement(unsigned long currentTime) {
     else if (cellVoltage > EMOTION_THRESHOLD_CALM) {
         emotion = CALM;
     }
-    else if (cellVoltage > EMOTION_THRESHOLD_SLEEPY) {
+    else {
         emotion = SLEEPY;
     }
-}
-
-void runMotor(unsigned long currentTime) {
-    // TODO: This is just testing code, real run program has not been defined yet
-
-    if (currentTime <= lastMotorChangeTime + MOTOR_RUNNING_TIME) {
-        return;
-    }
-
-    isMotorRunning = true;
-
-    // TEMP: Just testing code
-    #define MOTOR_FREQUENCY_INCREMENT 8
-    uint8_t newMotorFrequency = motorFrequency + MOTOR_FREQUENCY_INCREMENT;
-    if (newMotorFrequency < motorFrequency) {
-        isMotorDirectionForward = !isMotorDirectionForward;
-    }
-    motorFrequency = newMotorFrequency;
-
-    // Note: interface to inverter's 24 V logic inverts values, thus LOW on output
-    // is seen as HIGH on inverter inputs and vice versa.
-    digitalWrite(MOTOR_ENABLE_PIN, !isMotorRunning);
-    digitalWrite(MOTOR_FORWARD_PIN, !isMotorRunning || !isMotorDirectionForward);
-    digitalWrite(MOTOR_REVERSE_PIN, !isMotorRunning || isMotorDirectionForward);
-    analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
-
-    lastMotorChangeTime = currentTime;
 }
 
 void irDetectedFront() {
@@ -622,3 +646,76 @@ void runMotionDetection(unsigned long currentTime) {
         && (currentTime <= lastIrBackDetection + IR_ACTIVATION_PERIOD)
     );
 }
+
+void signalInverter(
+    bool isMoving,
+    bool isGoingForward,
+    bool isGoingBackward,
+    uint8_t speed
+) {
+    // Note: interface to inverter's 24 V logic inverts values, thus LOW on output
+    // is seen as HIGH on inverter inputs and vice versa.
+    digitalWrite(MOTOR_ENABLE_PIN, !isMoving);
+    digitalWrite(MOTOR_FORWARD_PIN, !isGoingForward);
+    digitalWrite(MOTOR_REVERSE_PIN, !isGoingBackward);
+    analogWrite(MOTOR_FREQUENCY_PIN, speed);
+}
+
+void runMotor(unsigned long currentTime) {
+    bool isFeelingGoingForward = 
+        senses.skinHeadActivated
+        || senses.skinBodyActivated
+        || senses.personFrontActivated
+    ;
+
+    bool isFeelingGoingBackward = 
+        senses.skinLeftActivated
+        || senses.skinRightActivated
+        || senses.personBackActivated
+    ;
+
+    uint8_t speed = emotionSpeed();
+    unsigned long restPeriod = emotionRestPeriod();
+
+    bool isBecomingRestless = currentTime > lastActivationTime + restPeriod;
+    if (isBecomingRestless) {
+        calmingTime = currentTime + EMOTION_RESTLESS_PERIOD;
+        isRestlessForward = random(2) == 1;
+    }
+
+    bool isFeelingMoving = 
+        isFeelingGoingForward
+        || isFeelingGoingBackward
+        || isBecomingRestless
+        || (currentTime <= calmingTime)
+    ;
+
+    if (isFeelingMoving) {
+        lastActivationTime = currentTime;
+    }
+
+    // If he wants to move but has no preference for direction, he will choose
+    // a random direction.
+    if (isFeelingMoving && !isFeelingGoingForward && !isFeelingGoingBackward) {
+        isFeelingGoingForward = isRestlessForward;
+        isFeelingGoingBackward = !isRestlessForward;
+    }
+
+    // Safety: Do no go into direction where an obstacle is spotted
+    bool isForwardMovementSafe = false;
+    bool isBackwardMovementSafe = false;
+    if (!senses.sightFrontActivated) {
+        isForwardMovementSafe = true;
+    }
+    if (!senses.sightBackActivated) {
+        isBackwardMovementSafe = true;
+    }
+
+    signalInverter(
+        isFeelingMoving,
+        isFeelingGoingForward && isForwardMovementSafe,
+        isFeelingGoingBackward && isBackwardMovementSafe,
+        speed
+    );
+}
+
