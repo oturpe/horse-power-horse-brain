@@ -16,6 +16,16 @@
 #define SKIN_RECEIVE_PIN_2 5
 #define SKIN_RECEIVE_PIN_3 6
 
+// The thresholds of skin readings for activation
+#define SKIN_HEAD_THRESHOLD 500
+#define SKIN_LEFT_THRESHOLD 500
+#define SKIN_RIGHT_THRESHOLD 500
+#define SKIN_BODY_THRESHOLD 500
+
+// Pin tied to output on Infrared sensor.
+#define IR_FRONT_PIN A3
+#define IR_BACK_PIN A4
+
 // Skin for reading values from bacterial fuel cell
 #define FUEL_CELL_PIN A6
 // The amount of samples to average when measuring fuel cell voltage
@@ -23,6 +33,13 @@
 // How often fuel cell values are printed in debug mode. Given in units of
 // millisecond
 #define FUEL_CELL_PRINT_INTERVAL 1000
+
+// Thresholds that fuel cell measurements have to exceed to trigger each
+// emotional state.
+#define EMOTION_THRESHOLD_SLEEPY 70
+#define EMOTION_THRESHOLD_CALM 100
+#define EMOTION_THRESHOLD_ACTIVE 120
+#define EMOTION_THRESHOLD_WILD 150
 
 // The minimum length of skin pulse that is accepted
 #define SKIN_PULSE_MIN_LENGTH 10
@@ -63,9 +80,12 @@
 // centimeter.
 #define SIGHT_ACTIVATION_DISTANCE 100
 
-// Pin tied to output on Infrared sensor.
-#define IR_FRONT_PIN A3
-#define IR_BACK_PIN A4
+// How long the motion sense remains active since detecting motion. Given in
+// units of millisecond
+#define IR_ACTIVATION_PERIOD (5 * 1000)
+
+// Interval between printing sense values in debug mode. Given in units of millisecond
+#define SENSE_PRINT_INTERVAL 2000
 
 // Maximum distance we want to pin for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 int sightMaxDelay = ultrasonicDelay(SIGHT_MAX_DISTANCE); 
@@ -76,10 +96,6 @@ int sightThresholdDelay = ultrasonicDelay(SIGHT_ACTIVATION_DISTANCE);
 //Measured distance US sensor
 int sightDistanceFront = 0;
 int sightDistanceBack = 0;
-
-//If there is a person sensed by IR sensor.
-byte isPersonInFront = 0;
-byte isPersonInBack = 0;
 
 //Timer for US sensor delay
 unsigned long sightDelay = 0;
@@ -92,6 +108,11 @@ bool isSightingFront = true;
 
 //Indicator boolean to avoid "1" by triggering US
 bool isSightSending = true;
+
+// Instants when infra red motion sensor last detected movement. Given in units
+// of millisecond measured from program start
+unsigned long lastIrFrontDetection = 0;
+unsigned long lastIrBackDetection = 0;
 
 enum SkinState {
     // Undefined state
@@ -127,6 +148,30 @@ struct Skin {
 
 Skin skins[SKIN_RECEIVE_PINS];
 
+struct Senses {
+    bool skinHeadActivated;
+    bool skinLeftActivated;
+    bool skinRightActivated;
+    bool skinBodyActivated;
+
+    bool sightFrontActivated;
+    bool sightBackActivated;
+
+    bool personFrontActivated;
+    bool personBackActivated;
+};
+
+Senses senses;
+
+enum Emotion {
+    SLEEPY,
+    CALM,
+    ACTIVE,
+    WILD
+};
+
+Emotion emotion;
+
 // The time when the horse was last activated. Given in units of millisecond
 unsigned long lastActivationTime = 0;
 
@@ -145,6 +190,7 @@ uint8_t motorFrequency = 0;
 #ifdef DEBUG
     unsigned long sightLastPrintTime = 0;
     unsigned long fuelCellLastPrintTime = 0;
+    unsigned long senseLastPrintTime = 0;
 #endif 
 
 void setup() {
@@ -186,6 +232,9 @@ void setup() {
     enableInterrupt(SKIN_RECEIVE_PIN_3, skinPulseReceived_3, RISING);
     skins[3].receivePin = SKIN_RECEIVE_PIN_3;
 
+    enableInterrupt(IR_FRONT_PIN, irDetectedFront, RISING);
+    enableInterrupt(IR_BACK_PIN, irDetectedBack, RISING);
+
     #ifdef DEBUG
         Serial.begin(9600);
     #endif
@@ -209,9 +258,19 @@ void loop() {
             }
             break;
         case RECEIVED:
-            if (skin->pulseLength > SKIN_PULSE_THRESHOLD) {
-                // TOOD: Should a different thing happen for different skin elements?
-                activate(currentTime);
+            switch (i) {
+            case 0:
+                senses.skinHeadActivated = skin->pulseLength > SKIN_HEAD_THRESHOLD;
+                break;
+            case 1:
+                senses.skinLeftActivated = skin->pulseLength > SKIN_LEFT_THRESHOLD;
+                break;
+            case 2:
+                senses.skinRightActivated = skin->pulseLength > SKIN_RIGHT_THRESHOLD;
+                break;
+            case 3:
+                senses.skinBodyActivated = skin->pulseLength > SKIN_BODY_THRESHOLD;
+                break;
             }
 
             #ifdef DEBUG
@@ -277,18 +336,47 @@ void loop() {
         break;
     }
 
+    runSight(currentTime);
+    runCellMeasurement(currentTime);
+    runMotionDetection(currentTime);
+    runMotor(currentTime);
+
     if (currentTime > lastActivationTime + ACTIVATION_LENGTH) {
         digitalWrite(INDICATOR_PIN, LOW);
     }
 
-    runSight(currentTime);
+    #ifdef DEBUG
+        if (currentTime > senseLastPrintTime + SENSE_PRINT_INTERVAL) {
+            senseLastPrintTime = currentTime;
 
-    int cellVoltage = runCellMeasurement(currentTime);
-
-    isPersonInFront = digitalRead(IR_FRONT_PIN);
-    isPersonInBack = digitalRead(IR_BACK_PIN);
-
-    runMotor(currentTime);
+            Serial.print("Senses;");
+            if (senses.skinHeadActivated) {
+                Serial.print("skinHead-");
+            }
+            if (senses.skinLeftActivated) {
+                Serial.print("skinLeft-");
+            }
+            if (senses.skinRightActivated) {
+                Serial.print("skinRight-");
+            }
+            if (senses.skinBodyActivated) {
+                Serial.print("skinBody-");
+            }
+            if (senses.sightFrontActivated) {
+                Serial.print("frontSight-");
+            }
+            if (senses.sightBackActivated) {
+                Serial.print("backSight-");
+            }
+            if (senses.personFrontActivated) {
+                Serial.print("personFront-");
+            }
+            if (senses.personBackActivated) {
+                Serial.print("personBack-");
+            }
+            Serial.println();
+        }
+    #endif
 }
 
 /// \brief
@@ -383,6 +471,13 @@ void processSighting(uint32_t echoDelay, bool isFront) {
     bool isSighting = echoDelay <= sightThresholdDelay;
     digitalWrite(INDICATOR_PIN, isSighting);
 
+    if (isFront) {
+        senses.sightFrontActivated = isSighting;
+    }
+    else {
+        senses.sightBackActivated = isSighting;
+    }
+
     #ifdef DEBUG
         if (isFront) {
             Serial.print("sight;front;");
@@ -390,8 +485,8 @@ void processSighting(uint32_t echoDelay, bool isFront) {
         else {
             Serial.print("sight;back;");
         }
-
         Serial.print(ultrasonicDistance(echoDelay), DEC);
+
         if (isSighting) {
             Serial.print(";sighted");
         }
@@ -452,7 +547,7 @@ inline void skinPulseReceived(uint8_t skinIndex) {
     }
 #endif
 
-int runCellMeasurement(unsigned long currentTime) {
+void runCellMeasurement(unsigned long currentTime) {
     unsigned int cellVoltage = 0;
     for (int i = 0; i < FUEL_CELL_SAMPLE_COUNT; i++) {
         cellVoltage += analogRead(FUEL_CELL_PIN);
@@ -467,7 +562,18 @@ int runCellMeasurement(unsigned long currentTime) {
         }
     #endif
 
-    return cellVoltage;
+    if (cellVoltage > EMOTION_THRESHOLD_WILD) {
+        emotion = WILD;
+    }
+    else if (cellVoltage > EMOTION_THRESHOLD_ACTIVE) {
+        emotion = ACTIVE;
+    }
+    else if (cellVoltage > EMOTION_THRESHOLD_CALM) {
+        emotion = CALM;
+    }
+    else if (cellVoltage > EMOTION_THRESHOLD_SLEEPY) {
+        emotion = SLEEPY;
+    }
 }
 
 void runMotor(unsigned long currentTime) {
@@ -495,4 +601,24 @@ void runMotor(unsigned long currentTime) {
     analogWrite(MOTOR_FREQUENCY_PIN, motorFrequency);
 
     lastMotorChangeTime = currentTime;
+}
+
+void irDetectedFront() {
+    lastIrFrontDetection = millis();
+}
+
+void irDetectedBack() {
+    lastIrBackDetection = millis();
+}
+
+void runMotionDetection(unsigned long currentTime) {
+
+    senses.personFrontActivated = (
+        (lastIrFrontDetection > 0) 
+        && (currentTime <= lastIrFrontDetection + IR_ACTIVATION_PERIOD)
+    );
+    senses.personBackActivated = (
+        (lastIrBackDetection > 0)
+        && (currentTime <= lastIrBackDetection + IR_ACTIVATION_PERIOD)
+    );
 }
