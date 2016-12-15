@@ -16,6 +16,14 @@
 #define SKIN_RECEIVE_PIN_2 5
 #define SKIN_RECEIVE_PIN_3 6
 
+// Skin for reading values from bacterial fuel cell
+#define FUEL_CELL_PIN A6
+// The amount of samples to average when measuring fuel cell voltage
+#define FUEL_CELL_SAMPLE_COUNT 10
+// How often fuel cell values are printed in debug mode. Given in units of
+// millisecond
+#define FUEL_CELL_PRINT_INTERVAL 1000
+
 // The minimum length of skin pulse that is accepted
 #define SKIN_PULSE_MIN_LENGTH 10
 // The maximum time to wait for a skin pulse. Given in units of microsecond
@@ -136,6 +144,7 @@ uint8_t motorFrequency = 0;
 
 #ifdef DEBUG
     unsigned long sightLastPrintTime = 0;
+    unsigned long fuelCellLastPrintTime = 0;
 #endif 
 
 void setup() {
@@ -158,6 +167,7 @@ void setup() {
     pinMode(SIGHT_ECHO_BACK_PIN, INPUT_PULLUP);
     pinMode(IR_FRONT_PIN, INPUT);
     pinMode(IR_BACK_PIN, INPUT);
+    pinMode(FUEL_CELL_PIN, A6);
 
     digitalWrite(SKIN_SEND_PIN, LOW);
 
@@ -272,6 +282,8 @@ void loop() {
     }
 
     runSight(currentTime);
+
+    int cellVoltage = runCellMeasurement(currentTime);
 
     isPersonInFront = digitalRead(IR_FRONT_PIN);
     isPersonInBack = digitalRead(IR_BACK_PIN);
@@ -439,6 +451,24 @@ inline void skinPulseReceived(uint8_t skinIndex) {
         Serial.print("];");
     }
 #endif
+
+int runCellMeasurement(unsigned long currentTime) {
+    unsigned int cellVoltage = 0;
+    for (int i = 0; i < FUEL_CELL_SAMPLE_COUNT; i++) {
+        cellVoltage += analogRead(FUEL_CELL_PIN);
+    }
+    cellVoltage /= FUEL_CELL_SAMPLE_COUNT;
+
+    #ifdef DEBUG
+        if (currentTime > fuelCellLastPrintTime + FUEL_CELL_PRINT_INTERVAL) {
+            Serial.print("Cell voltage;");
+            Serial.println(cellVoltage);
+            fuelCellLastPrintTime = currentTime;
+        }
+    #endif
+
+    return cellVoltage;
+}
 
 void runMotor(unsigned long currentTime) {
     // TODO: This is just testing code, real run program has not been defined yet
