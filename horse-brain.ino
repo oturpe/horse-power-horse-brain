@@ -23,8 +23,8 @@
 #define SKIN_BODY_THRESHOLD 500
 
 // Pin tied to output on Infrared sensor.
-#define IR_FRONT_PIN A3
-#define IR_BACK_PIN A4
+#define IR_FRONT_PIN A4
+#define IR_BACK_PIN A3
 
 // Skin for reading values from bacterial fuel cell
 #define FUEL_CELL_PIN A6
@@ -42,14 +42,14 @@
 
 // Speed of movement associated with each emotion. Given in linear units in
 // range [0x00, 0xff].
-#define EMOTION_SPEED_SLEEPY 20
-#define EMOTION_SPEED_CALM 50
-#define EMOTION_SPEED_ACTIVE 70
-#define EMOTION_SPEED_WILD 120
+#define EMOTION_SPEED_SLEEPY 80
+#define EMOTION_SPEED_CALM 100
+#define EMOTION_SPEED_ACTIVE 120
+#define EMOTION_SPEED_WILD 150
 
 // Amount of time before horse wants to move associated with each emotion.
 // Given in units of millisecond.
-#define EMOTION_REST_PERIOD_SLEEPY (1 * 6 * 1000L)
+#define EMOTION_REST_PERIOD_SLEEPY (1 * 60 * 1000L)
 #define EMOTION_REST_PERIOD_CALM (20 * 1000L)
 #define EMOTION_REST_PERIOD_ACTIVE (10 * 1000L)
 #define EMOTION_REST_PERIOD_WILD (5 * 1000L)
@@ -90,12 +90,12 @@
 #define SIGHT_ECHO_BACK_PIN A2
 
 // Interval of using sight. Given in units of millisecond
-#define SIGHT_INTERVAL 500
+#define SIGHT_INTERVAL 1500L
 // Maximum distance to be measured. Given in units of centimeter.
 #define SIGHT_MAX_DISTANCE 400
 // Maximum distance where the horse reacts to sightings. Given in units of
 // centimeter.
-#define SIGHT_ACTIVATION_DISTANCE /*100*/ 10
+#define SIGHT_ACTIVATION_DISTANCE 50
 
 // How long the motion sense remains active since detecting motion. Given in
 // units of millisecond
@@ -250,12 +250,14 @@ uint8_t motorFrequency = 0;
 void setup() {
     pinMode(INDICATOR_PIN, OUTPUT);
 
+    /*
     pinMode(SKIN_SEND_PIN, OUTPUT);
 
     pinMode(SKIN_RECEIVE_PIN_0, INPUT);
     pinMode(SKIN_RECEIVE_PIN_1, INPUT);
     pinMode(SKIN_RECEIVE_PIN_2, INPUT);
     pinMode(SKIN_RECEIVE_PIN_3, INPUT);
+    */
 
     pinMode(MOTOR_ENABLE_PIN, OUTPUT);
     pinMode(MOTOR_FORWARD_PIN, OUTPUT);
@@ -277,6 +279,7 @@ void setup() {
     digitalWrite(MOTOR_REVERSE_PIN, HIGH);
     analogWrite(MOTOR_FREQUENCY_PIN, 0x00);
 
+    /*
     enableInterrupt(SKIN_RECEIVE_PIN_0, skinPulseReceived_0, RISING);
     skins[0].receivePin = SKIN_RECEIVE_PIN_0;
     enableInterrupt(SKIN_RECEIVE_PIN_1, skinPulseReceived_1, RISING);
@@ -285,6 +288,7 @@ void setup() {
     skins[2].receivePin = SKIN_RECEIVE_PIN_2;
     enableInterrupt(SKIN_RECEIVE_PIN_3, skinPulseReceived_3, RISING);
     skins[3].receivePin = SKIN_RECEIVE_PIN_3;
+    */
 
     enableInterrupt(IR_FRONT_PIN, irDetectedFront, RISING);
     enableInterrupt(IR_BACK_PIN, irDetectedBack, RISING);
@@ -371,7 +375,7 @@ void loop() {
 
     switch (skinCommonState) {
     case READY:
-        startSkinPulse();
+        //startSkinPulse();
         for (int i = 0; i < SKIN_RECEIVE_PINS; i++) {
             Skin * skin = &skins[i];
             skin->state = WAITING;
@@ -625,6 +629,8 @@ void runCellMeasurement(unsigned long currentTime) {
     else {
         emotion = SLEEPY;
     }
+
+    emotion = ACTIVE;
 }
 
 void irDetectedFront() {
